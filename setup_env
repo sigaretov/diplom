@@ -1,0 +1,10 @@
+#!/bin/bash
+
+sudo systemctl start docker
+sudo docker build -t diplom_image .
+sudo docker run \
+    --name diplom \
+    -v ./src:/root/src \
+    -it \
+    diplom_image \
+    /bin/bash
