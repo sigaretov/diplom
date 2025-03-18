@@ -5,6 +5,7 @@ import utils as ut
 import time
 import sys
 from termcolor import colored
+import math
 
 def split_to_blocks(img, block_size):
     side = img.shape[0]
@@ -14,7 +15,7 @@ def split_to_blocks(img, block_size):
         raise ValueError("Image side % block_size != 0")
     
     block_num = side // block_size
-    result = np.zeros((block_num, block_num, block_size, block_size))
+    result = np.zeros((block_num, block_num, block_size, block_size), dtype=np.int16)
     
     for i in range(block_num):
         for j in range(block_num):
@@ -43,7 +44,7 @@ def print_blocks(blocks):
     for i in range(block_num * block_side):
         for j in range(block_num * block_side):
             val = blocks[i // block_side, j // block_side, i % block_side, j % block_side]
-            print(f'{' ' if val >= 0 else ''}{val:.6f}', end=" ")
+            print(f'{' ' if val >= 0 else ''}{val:>3}', end=' ')
             if (j + 1) % block_side == 0:
                 print("  ", end="")
         print()
@@ -82,29 +83,42 @@ def embedd_bit(bit, t, HL, LH, debug=False, pre=''):
     elif bit == 0 and (mLH - mHL) < t:
         diffHL = -mf2
         diffLH = mf2
+
+    # diffHL = (math.ceil(diffHL) if diffHL > 0 else math.floor(diffHL))
+    # diffLH = (math.ceil(diffLH) if diffLH > 0 else math.floor(diffLH))
     
     if debug:
         print(f'{pre}bit = {bit}')
         print(f'{pre}mf1, mf2 = {mf1:.6f}, {mf2:.6f}')
         print(f'{pre}mHL  - mLH  | t  =>  {mHL:.6f} - {mLH:.6f} = {mHL - mLH:.6f} | {t}')
         print(f'{pre}mHLn - mLHn | t  =>  {mHL + diffHL:.6f} - {mLH + diffLH:.6f} = {(mHL + diffHL) - (mLH + diffLH):.6f} | {t}')
+        print(f'{pre}diffHL, diffLH = {diffHL:.4f}, {diffLH:.4f}')
         print()
-    
+
     return (HL + diffHL, diffHL), (LH + diffLH, diffLH)
 
-def extract_bit(t, HL, LH, diffs, debug=False, pre=''):
+def extract_bit(t, HL, LH, diffs, use_new_bit_extraction=False, debug=False, pre=''):
     mHL = np.mean(HL)
     mLH = np.mean(LH)
 
-    if (mHL - mLH) > t or ((t - (mHL - mLH)) > 0 and (t - (mHL - mLH)) < 1e-6):
-        bit = 1
+    if use_new_bit_extraction:
+        diff = mHL - mLH
+        distT = abs(t - diff)
+        distTn = abs(-t - diff)
+
+        if diff >= t or (diff > 0 and distT < distTn):
+            bit = 1
+        else:
+            bit = 0
     else:
-        bit = 0
+        if (mHL - mLH) > t or ((t - (mHL - mLH)) > 0 and (t - (mHL - mLH)) < 1e-6):
+            bit = 1
+        else:
+            bit = 0
 
     if debug:
         print(f'{pre}mHL - mLH | t => {mHL - mLH} | {t}')
-        print(f'{pre}extracted bit: {bit}')
-        print(f'{pre}diff: {t - (mHL - mLH):.20f}')
+        print(f'{pre}extracted bit: {bit}\n')
 
     nHL = HL - diffs[0]
     nLH = LH - diffs[1]
@@ -125,7 +139,6 @@ def embedd(img, str, block_size, t, debug=False):
     result_blocks = copy.deepcopy(blocks)
 
     bit_pos = 0
-    total_changed = 0
     changed_map = {}
     try:
         for i in range(blocks_num):
@@ -133,9 +146,9 @@ def embedd(img, str, block_size, t, debug=False):
                 if bit_pos == len(str):
                     raise Exception('all bits were embedded before end of img was reached')
                     
-
                 if debug:
                     print(f'for block[{i}, {j}]:')
+                    ut.pmat(blocks[i, j], pre='\t')
                 
                 transformed_block = tr.apply_slt(blocks[i, j])
                 if debug:
@@ -150,24 +163,32 @@ def embedd(img, str, block_size, t, debug=False):
 
                 embedded_block = combine_subbands(ll, hln, lhn, hh)
                 if debug:
+                    print('\tembedded')
+                    ut.pmat(embedded_block, pre='\t')
                     print('\tembedded_block - transformed')
                     ut.pmat(embedded_block - transformed_block, pre='\t')
 
-                result_block = tr.apply_inverse_slt(embedded_block)
-                result_blocks[i, j] = result_block
+                result_block_float = tr.apply_inverse_slt(embedded_block)
+                result_blocks[i, j] = np.round(result_block_float)
                 if debug:
+                    print('\tafter inverse slt')
+                    ut.pmat(result_block_float, pre='\t')
                     print('\tresult - block')
-                    ut.pmat(result_block - blocks[i, j], pre='\t')
+                    ut.pmat(result_block_float - blocks[i, j], pre='\t')
+                    print('\tresult block rounded')
+                    ut.pmat(result_blocks[i, j], pre='\t')
+                    print('\tresult - block')
+                    ut.pmat(result_blocks[i, j] - blocks[i, j], pre='\t')
     
     except Exception as e:
         print(e)
 
-    result_over = combine_blocks(result_blocks)
+    result_over = combine_blocks(result_blocks).astype(np.int16)
     if debug:
         print('result with over')
         ut.pmat(result_over)
 
-    result = np.clip(result_over, 0, 1)
+    result = np.clip(result_over, 0, 255)
     over = copy.deepcopy(result_over)
     over = over - result
 
@@ -181,7 +202,21 @@ def embedd(img, str, block_size, t, debug=False):
 
     return result, over, changed_map
 
-def extract(orig, over, changed_map, block_size, t, debug=False):
+class ProcessParams:
+    def __init__(self):
+        self.debug = False
+        self.show = False
+        self.use_new_error_function = False
+        self.use_new_bit_extraction = False
+    
+    def __repr__(self):
+        s = ''
+        s = s + f'debug                  : {ut.pbool(self.debug)}\n'
+        s = s + f'show                   : {ut.pbool(self.show)}\n'
+        s = s + f'use new error function : {ut.pbool(self.use_new_error_function)}\n'
+        return s
+
+def extract(orig, over, changed_map, block_size, t, process_params=ProcessParams(), debug=False):
     img = orig + over
 
     if debug:
@@ -212,7 +247,7 @@ def extract(orig, over, changed_map, block_size, t, debug=False):
                 ut.pmat(transformed_block, pre='\t')
 
             ll, hl, lh, hh = split_to_subbands(transformed_block)
-            hln, lhn, bit = extract_bit(t, hl, lh, changed_map.get((i, j), (0, 0)), debug=debug, pre='\t')
+            hln, lhn, bit = extract_bit(t, hl, lh, changed_map.get((i, j), (0, 0)), use_new_bit_extraction=process_params.use_new_bit_extraction, debug=debug, pre='\t')
             mess = mess + str(bit)
             extracted_block = combine_subbands(ll, hln, lhn, hh)
             if debug:
@@ -231,19 +266,6 @@ def extract(orig, over, changed_map, block_size, t, debug=False):
     
     return result, mess
 
-class ProcessParams:
-    def __init__(self):
-        self.debug = False
-        self.show = False
-        self.use_new_error_function = False
-    
-    def __repr__(self):
-        s = ''
-        s = s + f'debug                  : {ut.pbool(self.debug)}\n'
-        s = s + f'show                   : {ut.pbool(self.show)}\n'
-        s = s + f'use new error function : {ut.pbool(self.use_new_error_function)}\n'
-        return s
-
 def yellow(val):
     return colored(str(val), 'yellow')
 
@@ -251,9 +273,9 @@ class ProcessStats:
     def __init__(self, orig, embedded, restored, changed_map, mess, mess_restored, t, block_size):
         self.changed = len(changed_map)
         self.pnsr = ut.psnr(orig, embedded)
-        self.restored_img = ut.mat_equal(orig, restored)
         self.mat_max_diff = ut.mat_max_diff(orig, restored)
-        self.restored_mess = mess == mess_restored
+        self.restored_img = (self.mat_max_diff <= 1)
+        self.restored_mess = (mess == mess_restored)
         self.restored_count = sum(c1 == c2 for c1, c2 in zip(mess, mess_restored))
         self.mess_len = len(mess)
         self.t = t
@@ -263,7 +285,7 @@ class ProcessStats:
         self.side_info_size = len(changed_map) * (8 * 2 + 64 * 2) # total_items * ((x_coord, y_coord) + (diffHL, diffLH))
         self.time_embedding = 0
         self.time_extracting = 0
-        self.error_function = (self.restored_count / self.mess_len) + (20 / self.pnsr)
+        self.error_function = ((self.mess_len - self.restored_count) / self.mess_len) + (20 / (self.pnsr + 0.00001))
     
 
     def __repr__(self):
@@ -280,8 +302,8 @@ class ProcessStats:
         s = s + f'side info size  : {self.side_info_size} bits (int8, float64)\n'
         s = s + f'bits overcap    : {self.side_info_size / self.mess_len:.2f}x\n'
         s = s + '\n'
-        s = s + f'restored_img    : {ut.pbool(self.restored_img)} (max_diff = {self.mat_max_diff:.10f})\n'
-        s = s + f'restored_mess   : {ut.pbool(self.restored_mess)} ({self.restored_count}/{self.mess_len} = {self.restored_count / self.mess_len * 100}%)\n'
+        s = s + f'restored_img    : {ut.pbool(self.restored_img)}\n'
+        s = s + f'restored_mess   : {ut.pbool(self.restored_mess)} ({self.restored_count}/{self.mess_len} = {self.restored_count / self.mess_len * 100:.2f} %)\n'
         s = s + f'time embedding  : {self.time_embedding:.3f}s\n'
         s = s + f'time extracting : {self.time_extracting:.3f}s\n'
         s = s + f'time total      : {self.time_embedding + self.time_extracting:.3f}s\n'
@@ -293,7 +315,7 @@ def process(orig, mess, t, block_size, params=ProcessParams()):
     emb_end_time = time.time()
     
     ext_start_time = time.time()
-    restored, mess_restored = extract(embedded, over, changed_map, block_size, t, debug=params.debug)
+    restored, mess_restored = extract(embedded, over, changed_map, block_size, t, process_params=params, debug=params.debug)
     ext_end_time = time.time()
 
     stats = ProcessStats(orig, embedded, restored, changed_map, mess, mess_restored, t, block_size)

@@ -4,6 +4,7 @@ import embedding as em
 import numpy as np
 import utils as ut
 from termcolor import colored
+import copy
 
 class AbcSol:
     instance_count = 0
@@ -28,13 +29,15 @@ class AbcSol:
         s = s + f'error({self.error:.15f}) '
         s = s + f'pred({self.prediction:.6f})   '
         s = s + ('x' if self.abandoned else ' ')
-        s = s + f'   t({self.t:.6f}) '
+
+        t_str = f'({self.t:.6f})'
+        s = s + f'   t{t_str:<11} '
         s = s + f'b_size({self.block_size})'
         return s
 
 class AbcSpace:
     def __init__(self):
-        self.t = (1e-5, 1)
+        self.t = (1, 10)
         self.block_size = (4, 4)
     
     def generate_sol(self, source_number=None):
@@ -47,8 +50,8 @@ class AbcSpace:
 class AbcParams:
     def __init__(self, process_params=em.ProcessParams()):
         self.food_number = 5
-        self.trail_limit = 50
-        self.iteration_limit = 100
+        self.trail_limit = 10
+        self.iteration_limit = 40
         self.debug = False
         self.process_params = process_params
         self.show_food_sources = False
@@ -91,12 +94,6 @@ class Abc:
                 new = self.gen_solution(source, n + 1)
                 self.process_img(new)
 
-                if self.params.debug:
-                    print('in new generation')
-                    print(last)
-                    print(new)
-                    print(f'got: {ut.pbool(new.error < last.error)}\n')
-
                 if new.error < last.error:
                     source.append(new)
                 else:
@@ -110,12 +107,6 @@ class Abc:
                     last = source[-1]
                     new = self.gen_solution(source, n + 1)
                     self.process_img(new)
-
-                    if self.params.debug:
-                        print('in limit generation')
-                        print(last)
-                        print(new)
-                        print(f'got: {ut.pbool(new.error < last.error)}\n')
 
                     if new.error < last.error:
                         source.append(new)
@@ -149,12 +140,11 @@ class Abc:
         if self.params.show_food_sources:
             self.print_sources(food_sources, best_sol)
         
-        print(f'{colored('best', 'green')}: {best_sol}\n')
+        print(f'\n{colored('best', 'green')}: {best_sol}\n')
 
         if self.params.show_images_at_end:
-            process_params = em.ProcessParams()
-            process_params.show = True
-            stats = self.process_img(best_sol, process_params=process_params)
+            self.params.process_params.show = True
+            stats = self.process_img(best_sol, process_params=self.params.process_params)
         else:
             stats = self.process_img(best_sol)
         
@@ -163,7 +153,7 @@ class Abc:
     
     def run_random(self):
         sol = self.space.generate_sol()
-        process_params = em.ProcessParams()
+        process_params = copy.deepcopy(self.params.process_params)
         process_params.debug = self.params.debug
         process_params.show = self.params.show_images_at_end
         stats = self.process_img(sol, process_params)
@@ -179,11 +169,7 @@ class Abc:
 
     def gen_solution(self, source: list[AbcSol], source_number):
         curr = source[-1]
-        
-        mf = random.uniform(-1, 1)
-
-        if self.params.debug:
-            print(f'mf: {mf:.10f}')
+        mf = random.uniform(0, 1)
         
         pos = len(source) - 1
         while pos > 0 and not source[pos - 1].abandoned:
@@ -206,7 +192,7 @@ class Abc:
             for n, sol in enumerate(food):
                 num = f'{str(n+1) + '.':<4}'
                 sol_str = str(sol)
-                if best is not None and sol == best:
+                if best is not None and sol.t == best.t:
                     num = colored(num, 'green')
                     sol_str = colored(sol_str, 'green')
                 print(f'   {num} ', end='')
@@ -217,12 +203,12 @@ class Abc:
         # if self.params.debug:
         #     print(f'error_sum = {error_sum}')
 
-        for sol in food_sources[:][-1]:
-            if sol.error >= 0:
-                prediction = 1 / (sol.error + 1)
+        for source in food_sources:
+            if source[-1].error >= 0:
+                prediction = 1 / (source[-1].error + 1)
             else:
-                prediction = 1 + abs(sol.prediction)
-            sol.prediction = prediction
+                prediction = 1 + abs(source[-1].error)
+            source[-1].prediction = prediction
     
     def process_img(self, sol, process_params=None):
         if process_params is None:

@@ -18,11 +18,11 @@ def psnr(old, new):
     if old.size != new.size:
         raise ValueError(f"old.size{old.size} != new.size{new.size}")
 
-    mse = np.mean((old.astype(np.float16) - new.astype(np.float16)) ** 2)
+    mse = np.mean((old - new) ** 2)
     if mse == 0:
         return float('inf')
     
-    max_val = 1.0
+    max_val = 255.0
     res = 20 * np.log10(max_val / np.sqrt(mse))
     return float(res)
 
@@ -38,7 +38,7 @@ def show_images(*images):
             img, name = image, "unnamed"
 
         plt.subplot(1, count, i + 1)
-        plt.imshow((img * 255).astype(int), cmap='gray', vmin=0, vmax=255)
+        plt.imshow(img, cmap='gray', vmin=0, vmax=255)
         plt.axis('off')
         plt.title(f'{name}')
 
@@ -88,29 +88,46 @@ def find_common_divisors(a, b):
 
     return common_divisors
 
-def gen_test(size, random=True):
-    if not random:
-        sequence = np.linspace(0, 1, size * size, endpoint=True)
-        matrix = sequence.reshape((size, size))    
-        return matrix
+def gen_test(size, integer=True, random=True):
+    if integer:
+        if random:
+            return np.random.randint(0, 255, (size, size), dtype=np.int16)
+        else:
+            sequence = np.linspace(0, 255, size * size, endpoint=True, dtype=np.int16)
+            matrix = sequence.reshape((size, size))    
+            return matrix
     else:
-        return np.random.rand(size, size)
+        if not random:
+            sequence = np.linspace(0, 1, size * size, endpoint=True)
+            matrix = sequence.reshape((size, size))    
+            return matrix
+        else:
+            return np.random.rand(size, size)
+        
+def gen_grad(size):
+    sequence = np.linspace(0, size * size, size * size, endpoint=False, dtype=np.int16)
+    matrix = sequence.reshape((size, size))    
+    return matrix
 
-def pmat(mat, pre='', full=False):
+def pmat(mat, pre=''):
     n = len(mat)
+    integer = (mat.dtype == np.int16)
 
     for i in range(n):
-        print(pre, end='')
+        print(f'{pre}', end='')
         for j in range(n):
-            if not full:
-                print(f'{' ' if mat[i][j] >= 0 else ''}{mat[i][j]:.6f}', end=' ')
+
+            if integer:
+                val = str(mat[i][j])
+                print(f'{val:>5}', end=' ')
             else:
-                print(f'{' ' if mat[i][j] >= 0 else ''}{mat[i][j]}', end=' ')
+                val = f'{mat[i][j]:.4f}'
+                print(f'{val:>10}', end=' ')
         print()
     print()
 
 def mat_equal(left, right):
-    return bool(np.all(np.isclose(left - right, 0, atol=1e-4)))
+    return np.max(np.abs(left - right)) <= 1
 
 def mat_max_diff(left, right):
     return np.max(np.abs(left - right))
