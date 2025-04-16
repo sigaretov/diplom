@@ -26,7 +26,7 @@ class AbcSol:
         if self.source != -1:
             s = s + f'source({self.source}) '
         s = s + f'trail{'(' + str(self.trail) + ')':<6}'
-        s = s + f'error({self.error:.15f}) '
+        s = s + f'error({self.error:.6f}) '
         s = s + f'pred({self.prediction:.6f})   '
         s = s + ('x' if self.abandoned else ' ')
 
@@ -36,27 +36,27 @@ class AbcSol:
         return s
 
 class AbcSpace:
-    def __init__(self):
-        self.t = (1, 10)
-        self.block_size = (4, 4)
+    def __init__(self, t = (1, 10), block_size = 16):
+        self.t = t
+        self.block_size = block_size
     
     def generate_sol(self, source_number=None):
         return AbcSol(
             source_number=(source_number if source_number is not None else -1),
             t=max(random.uniform(self.t[0], self.t[1]), 0.000001),
-            block_size=random.randint(self.block_size[0], self.block_size[1])
+            block_size=self.block_size
         )
 
 class AbcParams:
     def __init__(self, process_params=em.ProcessParams()):
         self.food_number = 5
         self.trail_limit = 10
-        self.iteration_limit = 40
-        self.debug = False
+        self.iteration_limit = 30
         self.process_params = process_params
+        self.debug = False
         self.show_food_sources = False
-        self.show_images_at_end = True
-
+        self.show_images_at_end = False
+        self.use_new_mf = False
 
 class Abc:
     def __init__(self, img, mess, space=AbcSpace(), params=AbcParams()):
@@ -67,28 +67,26 @@ class Abc:
     
     def run(self):
         # init food sources
+        # print(f'init food sources')
         food_sources = [[] for _ in range(self.params.food_number)]
 
-        if not self.params.debug:
-            ut.printProgressBar(0, self.params.iteration_limit + 1, prefix = 'Progress:', suffix = 'Complete', length = 50)
-
         # init 0 generation
+        # print(f'init 0 generation')
         for i in range(self.params.food_number):
             food_sources[i].append(self.space.generate_sol(i + 1))
         
+        # print(f'process 0 generation')
         for i in range(self.params.food_number):
             self.process_img(food_sources[i][-1])
-        
+
+        # print(f'fill predictions')
         self.fill_predictions(food_sources)
-
         best_sol = self.get_best(food_sources)
-
-        if not self.params.debug:
-            ut.printProgressBar(1, self.params.iteration_limit + 1, prefix = 'Progress:', suffix = 'Complete', length = 50)
 
         
         for i in range(self.params.iteration_limit):
             # init new generation
+            # print(f'iteration {i + 1}')
             for n, source in enumerate(food_sources):
                 last = source[-1]
                 new = self.gen_solution(source, n + 1)
@@ -134,13 +132,10 @@ class Abc:
             if local_best.error <= best_sol.error:
                 best_sol = local_best
             
-            if not self.params.debug:
-                ut.printProgressBar(i + 2, self.params.iteration_limit + 1, prefix = 'Progress:', suffix = 'Complete', length = 50)
         
         if self.params.show_food_sources:
             self.print_sources(food_sources, best_sol)
         
-        print(f'\n{colored('best', 'green')}: {best_sol}\n')
 
         if self.params.show_images_at_end:
             self.params.process_params.show = True
@@ -148,8 +143,7 @@ class Abc:
         else:
             stats = self.process_img(best_sol)
         
-        print(stats)
-        return best_sol
+        return best_sol, stats
     
     def run_random(self):
         sol = self.space.generate_sol()
@@ -157,8 +151,7 @@ class Abc:
         process_params.debug = self.params.debug
         process_params.show = self.params.show_images_at_end
         stats = self.process_img(sol, process_params)
-        print(stats)
-        return sol
+        return sol, stats
 
     def get_best(self, food_sources: list[AbcSol]) -> AbcSol:
         best = food_sources[0][-1]
@@ -169,8 +162,11 @@ class Abc:
 
     def gen_solution(self, source: list[AbcSol], source_number):
         curr = source[-1]
-        mf = random.uniform(0, 1)
-        
+        if self.params.use_new_mf:
+            mf = random.uniform(-1, 1)
+        else:
+            mf = random.uniform(0, 1)
+
         pos = len(source) - 1
         while pos > 0 and not source[pos - 1].abandoned:
             pos -= 1
@@ -199,16 +195,15 @@ class Abc:
                 print(sol_str)
     
     def fill_predictions(self, food_sources):
-        error_sum = sum(food[-1].error for food in food_sources)
-        # if self.params.debug:
-        #     print(f'error_sum = {error_sum}')
-
         for source in food_sources:
             if source[-1].error >= 0:
                 prediction = 1 / (source[-1].error + 1)
             else:
                 prediction = 1 + abs(source[-1].error)
             source[-1].prediction = prediction
+        prediction_sum = sum(food[-1].error for food in food_sources)
+        for source in food_sources:
+            source[-1].prediction = source[-1].prediction / prediction_sum
     
     def process_img(self, sol, process_params=None):
         if process_params is None:

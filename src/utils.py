@@ -3,16 +3,14 @@ from matplotlib import pyplot as plt
 from PIL import Image
 import copy
 from termcolor import colored
+import os
 
-
-def load_image(path, size=(512, 512)):
-    return np.array(Image.open(path).resize(size).convert('L')).astype(np.int16)
-
+def load_image(path, side_size=512):
+    return np.array(Image.open(path).resize((side_size, side_size)).convert('L')).astype(np.int16)
 
 def int2bin(n, length):
     binary = bin(n)[2:].zfill(length)
     return binary
-
 
 def psnr(old, new):
     if old.size != new.size:
@@ -26,18 +24,19 @@ def psnr(old, new):
     res = 20 * np.log10(max_val / np.sqrt(mse))
     return float(res)
 
-
 def show_images(*images):
     count = len(images)
-    plt.figure(figsize=(5 * count, 5))
+    rows = count // 3
+    plt.figure(figsize=(5 * 3, 5 * rows))
 
+    row, col = 0, 0
     for i, image in enumerate(images):
         if isinstance(image, tuple):
             img, name = image
         else:
             img, name = image, "unnamed"
 
-        plt.subplot(1, count, i + 1)
+        plt.subplot(rows, 3, i + 1)
         plt.imshow(img, cmap='gray', vmin=0, vmax=255)
         plt.axis('off')
         plt.title(f'{name}')
@@ -180,6 +179,33 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
     print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
-    # Print New Line on Complete
     if iteration == total: 
         print()
+
+def progress(current, total):
+    printProgressBar(current, total, prefix = 'Progress:', suffix = 'Complete', length = 50)
+
+def gen_graph(x, y, name_x, name_y, title=None):
+    # plt.plot(x, y)
+    plt.plot(range(len(x)), y, marker='o')
+    plt.xticks(ticks=range(len(x)), labels=x)
+    if title is not None:
+        plt.title(title)
+    plt.xlabel(name_x)
+    plt.ylabel(name_y)
+    plt.show()
+
+def get_message(version, length):
+    if f"{version}" in os.listdir("./inputs/watermarks") and f"{length}.txt" in os.listdir(f"./inputs/watermarks/{version}"):
+        with open(f"./inputs/watermarks/{version}/{length}.txt", "r") as f:
+            return f.read()
+    else:
+        mess = gen_mess(length)
+        save_message(mess, version, length)
+        return mess
+
+def save_message(message, version, length):
+    if not os.path.exists(f"./inputs/watermarks/{version}"):
+        os.makedirs(f"./inputs/watermarks/{version}")
+    with open(f"./inputs/watermarks/{version}/{length}.txt", "w") as f:
+        f.write(message)
